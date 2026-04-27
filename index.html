@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>注音 Wordle</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body {
+  width: 100%; min-height: 100vh; overflow-x: hidden;
+  background: #121213; color: #fff;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+.container { max-width: 500px; margin: 0 auto; padding: 12px; min-height: 100vh; display: flex; flex-direction: column; }
+header { text-align: center; padding: 8px 0 12px; border-bottom: 1px solid #3a3a3c; margin-bottom: 12px; }
+header h1 { font-size: 22px; letter-spacing: 2px; font-weight: 800; }
+header .sub { font-size: 13px; color: #888; margin-top: 4px; }
+header .player { font-size: 12px; color: #666; margin-top: 2px; }
+
+.board { flex: 0 0 auto; display: grid; grid-template-rows: repeat(6, 1fr); gap: 6px; padding: 8px 0; max-width: 340px; margin: 0 auto; width: 100%; }
+.row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.cell {
+  aspect-ratio: 1 / 1;
+  border: 2px solid #3a3a3c;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: bold; color: #fff;
+  background: transparent;
+  transition: transform 0.2s, background 0.3s, border 0.3s;
+}
+.cell.filled { border-color: #565758; transform: scale(1.05); }
+.cell.flip { animation: flip 0.6s ease forwards; }
+.cell.correct { background: #6aaa64; border-color: #6aaa64; color: #fff; }
+.cell.present { background: #c9b458; border-color: #c9b458; color: #fff; }
+.cell.absent  { background: #787c7e; border-color: #787c7e; color: #fff; }
+@keyframes flip {
+  0%   { transform: rotateX(0); }
+  50%  { transform: rotateX(90deg); }
+  100% { transform: rotateX(0); }
+}
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20%,60% { transform: translateX(-6px); }
+  40%,80% { transform: translateX(6px); }
+}
+.row.shake { animation: shake 0.4s ease; }
+
+.toast {
+  position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
+  background: #fff; color: #000; padding: 10px 20px; border-radius: 4px;
+  font-size: 14px; font-weight: bold; z-index: 100;
+  opacity: 0; pointer-events: none; transition: opacity 0.3s;
+}
+.toast.show { opacity: 1; }
+
+.keyboard { padding: 8px 4px 12px; margin-top: auto; }
+.kb-row { display: flex; gap: 4px; margin-bottom: 6px; justify-content: center; flex-wrap: wrap; }
+.key {
+  flex: 1 1 auto;
+  min-width: 28px; max-width: 44px;
+  height: 48px;
+  background: #818384; color: #fff;
+  border: none; border-radius: 4px;
+  font-size: 16px; font-weight: 700;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s;
+}
+.key:active { background: #6a6c6e; }
+.key.correct { background: #6aaa64; color: #fff; }
+.key.present { background: #c9b458; color: #fff; }
+.key.absent  { background: #3a3a3c; color: #888; }
+.key.wide { flex: 0 0 70px; max-width: 70px; font-size: 12px; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: none; align-items: center; justify-content: center;
+  z-index: 200; padding: 20px;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: #1a1a1b; border-radius: 8px; padding: 24px;
+  max-width: 360px; width: 100%; text-align: center;
+}
+.modal h2 { font-size: 22px; margin-bottom: 12px; }
+.modal p { font-size: 14px; color: #ccc; margin-bottom: 8px; line-height: 1.6; }
+.modal .stats { display: flex; justify-content: space-around; margin: 20px 0; }
+.stat { display: flex; flex-direction: column; align-items: center; }
+.stat-value { font-size: 32px; font-weight: bold; }
+.stat-label { font-size: 11px; color: #888; }
+.modal .closebtn {
+  background: #6aaa64; color: #fff; border: none; padding: 12px 32px;
+  font-size: 14px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 8px;
+}
+.modal .closebtn:hover { opacity: 0.85; }
+.modal .hint { font-size: 12px; color: #777; margin-top: 12px; }
+
+.error-screen {
+  text-align: center; padding: 60px 20px;
+  display: none;
+}
+.error-screen.show { display: block; }
+.error-screen h2 { color: #ff6b6b; margin-bottom: 12px; }
+.error-screen p { color: #ccc; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="container" id="game">
+  <header>
+    <h1>🎯 注音 Wordle</h1>
+    <div class="sub" id="puzzle-info">第 — 期 · ----/--/--</div>
+    <div class="player" id="player-info">玩家:—</div>
+  </header>
+
+  <div class="board" id="board"></div>
+
+  <div class="keyboard" id="keyboard"></div>
+</div>
+
+<div class="error-screen" id="error">
+  <h2>⚠️ 無法載入</h2>
+  <p id="error-msg">連結失效或不正確,請從 Discord 重新點擊「Play now」按鈕。</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2 id="modal-title">🎉 答對了!</h2>
+    <p id="modal-text">你用 4 次猜中了!</p>
+    <div class="stats">
+      <div class="stat"><div class="stat-value" id="stat-attempts">-</div><div class="stat-label">嘗試次數</div></div>
+      <div class="stat"><div class="stat-value" id="stat-time">-</div><div class="stat-label">用時</div></div>
+    </div>
+    <p class="hint">📤 結果已自動發送到 Discord 頻道<br>關閉這個視窗即可,明天再來吧!</p>
+    <button class="closebtn" onclick="window.close()">關閉視窗</button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="char_to_bopo_data.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
