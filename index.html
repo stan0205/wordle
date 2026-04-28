@@ -12,11 +12,33 @@ html, body {
   font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
   user-select: none; -webkit-user-select: none;
 }
-.container { max-width: 500px; margin: 0 auto; padding: 12px; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Layout 容器 ───────────────────────────────────────
+   桌面(>=720px):left = 棋盤+標題,right = 候選詞,鍵盤橫跨整列
+   手機(<720px):候選詞放棋盤上方,棋盤下方,鍵盤最下方
+*/
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 12px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 header { text-align: center; padding: 8px 0 12px; border-bottom: 1px solid #3a3a3c; margin-bottom: 12px; }
 header h1 { font-size: 22px; letter-spacing: 2px; font-weight: 800; }
 header .sub { font-size: 13px; color: #888; margin-top: 4px; }
 header .player { font-size: 12px; color: #666; margin-top: 2px; }
+
+/* 主遊戲區:棋盤 + 候選詞 */
+.main-area {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
 
 .board { flex: 0 0 auto; display: grid; grid-template-rows: repeat(6, 1fr); gap: 6px; padding: 8px 0; max-width: 340px; margin: 0 auto; width: 100%; }
 .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
@@ -30,6 +52,11 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
 }
 .cell.filled { border-color: #565758; transform: scale(1.05); }
 .cell.flip { animation: flip 0.6s ease forwards; }
+.cell.invalid {
+  background: rgba(220, 53, 53, 0.3);
+  border-color: #dc3535;
+  color: #ff6b6b;
+}
 .cell.correct { background: #6aaa64; border-color: #6aaa64; color: #fff; }
 .cell.present { background: #c9b458; border-color: #c9b458; color: #fff; }
 .cell.absent  { background: #787c7e; border-color: #787c7e; color: #fff; }
@@ -45,6 +72,39 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
 }
 .row.shake { animation: shake 0.4s ease; }
 
+/* ── 候選詞區 ───────────────────────────────────────── */
+.suggestions {
+  width: 100%;
+  max-width: 340px;
+  min-height: 60px;
+  background: #1f1f21;
+  border: 1px solid #3a3a3c;
+  border-radius: 8px;
+  padding: 10px 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.suggestions.show { opacity: 1; pointer-events: auto; }
+.suggestions .sug-title {
+  font-size: 12px;
+  color: #aaa;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.suggestions .sug-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.suggestions .sug-item {
+  font-size: 14px;
+  color: #fff;
+  background: #2a2a2c;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
 .toast {
   position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
   background: #fff; color: #000; padding: 10px 20px; border-radius: 4px;
@@ -53,7 +113,7 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
 }
 .toast.show { opacity: 1; }
 
-.keyboard { padding: 8px 4px 12px; margin-top: auto; }
+.keyboard { padding: 8px 4px 12px; margin-top: auto; max-width: 500px; width: 100%; margin-left: auto; margin-right: auto; }
 .kb-row { display: flex; gap: 4px; margin-bottom: 6px; justify-content: center; flex-wrap: wrap; }
 .key {
   flex: 1 1 auto;
@@ -71,6 +131,25 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
 .key.present { background: #c9b458; color: #fff; }
 .key.absent  { background: #3a3a3c; color: #888; }
 .key.wide { flex: 0 0 70px; max-width: 70px; font-size: 12px; }
+
+/* ── 桌面版 layout(>=720px):候選詞放棋盤右側 ────── */
+@media (min-width: 720px) {
+  .main-area {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-areas: "board sug";
+    gap: 24px;
+    align-items: start;
+    justify-content: center;
+  }
+  .board { grid-area: board; }
+  .suggestions {
+    grid-area: sug;
+    max-width: 280px;
+    min-height: 200px;
+    margin-top: 8px;
+  }
+}
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -113,7 +192,10 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
     <div class="player" id="player-info">玩家:—</div>
   </header>
 
-  <div class="board" id="board"></div>
+  <div class="main-area">
+    <div class="board" id="board"></div>
+    <div class="suggestions" id="suggestions"></div>
+  </div>
 
   <div class="keyboard" id="keyboard"></div>
 </div>
@@ -133,13 +215,22 @@ header .player { font-size: 12px; color: #666; margin-top: 2px; }
       <div class="stat"><div class="stat-value" id="stat-attempts">-</div><div class="stat-label">嘗試次數</div></div>
       <div class="stat"><div class="stat-value" id="stat-time">-</div><div class="stat-label">用時</div></div>
     </div>
-    <p class="hint">📤 結果已自動發送到 Discord 頻道<br>關閉這個視窗即可,明天再來吧!</p>
-    <button class="closebtn" onclick="window.close()">關閉視窗</button>
+    <p class="hint">📤 結果已自動發送到 Discord 頻道<br>關閉這個小視窗即可看你的答題記錄,明天再來吧!</p>
+    <button class="closebtn" id="modal-close-btn">關閉,看答題記錄</button>
   </div>
 </div>
 
 <script src="config.js"></script>
 <script src="char_to_bopo_data.js"></script>
+<script src="valid_bopos.js"></script>
 <script src="game.js"></script>
+<script>
+  // 關閉 modal:只關小視窗,留下遊戲畫面(state.finished 已鎖定無法重玩)
+  document.getElementById('modal-close-btn').addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById('modal').classList.remove('show');
+  });
+</script>
 </body>
 </html>
