@@ -1,15 +1,12 @@
 /**
  * game.js — 注音 Wordle 主邏輯
  *
- * 流程:
- * 1. 從 URL 讀取 token(來自 bot 給的 Play now 連結)
- * 2. 解密 token 得到:玩家、伺服器、答案注音、答案詞、第幾期
- * 3. 玩家點擊注音鍵盤逐格輸入
- * 4. 滿 5 格 + Enter 送出 → 比對答案 → 顯示綠/黃/灰
- * 5. 第一次點開 → 自動發 "playing" 通知到 Cloudflare → Discord
- * 6. 通關/失敗 → 自動發 "finished" / "failed" 通知
- *
- * 答案保護:token 內的答案用 XOR + base64 加密,F12 看到的是亂碼
+ * 主要功能:
+ * 1. Token 解密 + 從 URL 載入題目
+ * 2. 注音鍵盤輸入(5 格 + Enter)
+ * 3. 滿 5 格時即時顯示候選詞(電腦右側、手機上方)
+ * 4. 按 Enter 若不是合法詞 → 整列變紅,需玩家自己用刪除鍵收回(不算一次機會)
+ * 5. 答對/失敗 → 顯示 modal(關閉 modal 後保留遊戲畫面但不能重玩)
  */
 
 (() => {
@@ -17,10 +14,7 @@
   // 常數
   // ──────────────────────────────────────────────────────
   const ROWS = 6, COLS = 5;
-  const TONE_MARKS = 'ˇˊˋ˙';
 
-  // 注音鍵盤布局(只放注音符號,不放聲調 — 玩家不需要選聲調)
-  // 排成 4 行,每行 9-10 個,適合手機螢幕
   const KEYBOARD_LAYOUT = [
     ['ㄅ','ㄉ','ㄓ','ㄚ','ㄞ','ㄢ','ㄦ'],
     ['ㄆ','ㄊ','ㄍ','ㄐ','ㄔ','ㄗ','ㄧ','ㄛ','ㄟ','ㄣ'],
@@ -29,38 +23,28 @@
   ];
 
   // ──────────────────────────────────────────────────────
-  // 工具:從 URL 解析 token
+  // Token 處理
   // ──────────────────────────────────────────────────────
+  const PASSPHRASE = 'bopowordle2026!@#xK9mP2vL';
+
   function getTokenFromURL() {
     const params = new URLSearchParams(window.location.search);
     return params.get('t');
   }
 
-  // ──────────────────────────────────────────────────────
-  // Token 解密
-  // 格式:base64url( UTF8(JSON.stringify({...})) XOR PASSPHRASE )
-  // 內容:{ guildId, userId, userName, channelId, issue, date, word, bopo }
-  // ──────────────────────────────────────────────────────
-  const PASSPHRASE = 'bopowordle2026!@#xK9mP2vL'; // 跟 bot 端一致
-
   function decodeToken(token) {
     try {
-      // base64url decode → bytes
       let s = token.replace(/-/g, '+').replace(/_/g, '/');
       const pad = s.length % 4;
       if (pad) s += '='.repeat(4 - pad);
       const binary = atob(s);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
-
-      // XOR 解密(byte 層級,跟密鑰的 UTF-8 bytes 對 XOR)
       const keyBytes = new TextEncoder().encode(PASSPHRASE);
       const decoded = new Uint8Array(bytes.length);
       for (let i = 0; i < bytes.length; i++) {
         decoded[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
       }
-
-      // bytes → UTF-8 string
       const json = new TextDecoder('utf-8').decode(decoded);
       return JSON.parse(json);
     } catch (e) {
@@ -70,18 +54,12 @@
   }
 
   // ──────────────────────────────────────────────────────
-  // localStorage:記錄今日進度,避免重複發開始通知
-  // key 用 puzzle 的 issue + date + bopo 組合,確保不同題目絕不撞 key
+  // localStorage 進度
   // ──────────────────────────────────────────────────────
   const LS_KEY_PREFIX = 'wordle_progress_';
   function getProgressKey(puzzle) {
-    // 用題目本身的識別:期數 + 日期 + 答案注音 + 玩家ID
     return LS_KEY_PREFIX + [
-      puzzle.issue,
-      puzzle.date,
-      puzzle.bopo,
-      puzzle.userId,
-      puzzle.guildId,
+      puzzle.issue, puzzle.date, puzzle.bopo, puzzle.userId, puzzle.guildId
     ].join('|');
   }
   function loadProgress(puzzle) {
@@ -93,34 +71,19 @@
   function saveProgress(puzzle, data) {
     try {
       localStorage.setItem(getProgressKey(puzzle), JSON.stringify(data));
-    } catch (e) { /* 隱私模式可能無法寫,忽略 */ }
+    } catch (e) { /* ignore */ }
   }
 
   // ──────────────────────────────────────────────────────
-  // 字 → 注音
-  // ──────────────────────────────────────────────────────
-  function chineseToBopomofo(word) {
-    let result = '';
-    for (const c of word) {
-      const bopo = CHAR_TO_BOPO[c];
-      if (!bopo) return null;
-      result += bopo;
-    }
-    return result;
-  }
-
-  // ──────────────────────────────────────────────────────
-  // 比對邏輯(同 Wordle,正確處理重複注音)
+  // 比對邏輯
   // ──────────────────────────────────────────────────────
   function evaluate(guess, answer) {
     const n = answer.length;
     const result = new Array(n).fill('absent');
     const used = new Array(n).fill(false);
-    // 先找 correct
     for (let i = 0; i < n; i++) {
       if (guess[i] === answer[i]) { result[i] = 'correct'; used[i] = true; }
     }
-    // 再找 present
     for (let i = 0; i < n; i++) {
       if (result[i] === 'correct') continue;
       for (let j = 0; j < n; j++) {
@@ -135,7 +98,7 @@
   }
 
   // ──────────────────────────────────────────────────────
-  // Relay:把事件送到 Cloudflare → Discord
+  // Relay
   // ──────────────────────────────────────────────────────
   async function sendEvent(event, payload) {
     if (!CONFIG.RELAY_URL || CONFIG.RELAY_URL.includes('你的帳號')) {
@@ -143,11 +106,7 @@
       return;
     }
     try {
-      const body = {
-        event,
-        token: state.token,
-        ...payload,
-      };
+      const body = { event, token: state.token, ...payload };
       await fetch(CONFIG.RELAY_URL, {
         method: 'POST',
         headers: {
@@ -166,11 +125,12 @@
   // ──────────────────────────────────────────────────────
   const state = {
     token: null,
-    puzzle: null,         // { guildId, userId, userName, channelId, issue, date, word, bopo }
-    attempts: [],         // [{ guess: 'ㄋㄩㄒㄧㄥ', word: '女星', statuses: [...] }]
-    currentInput: '',     // 當前正在輸入的注音(0~5格)
+    puzzle: null,
+    attempts: [],
+    currentInput: '',
     finished: false,
     startTime: null,
+    invalidMode: false,  // 當前列「找不到這個詞」的鎖定狀態
   };
 
   // ──────────────────────────────────────────────────────
@@ -209,7 +169,6 @@
       });
       kb.appendChild(row);
     });
-    // 控制鍵列:刪除 + 送出
     const ctrlRow = document.createElement('div');
     ctrlRow.className = 'kb-row';
     const del = document.createElement('button');
@@ -247,8 +206,14 @@
       if (!cell) continue;
       const ch = state.currentInput[c] || '';
       cell.textContent = ch;
-      cell.className = 'cell' + (ch ? ' filled' : '');
+      // invalid 樣式不要被洗掉
+      if (state.invalidMode) {
+        cell.className = 'cell invalid' + (ch ? ' filled' : '');
+      } else {
+        cell.className = 'cell' + (ch ? ' filled' : '');
+      }
     }
+    updateSuggestions();
   }
 
   async function renderAttemptResult(rIdx, attempt) {
@@ -256,7 +221,6 @@
       const cell = document.getElementById(`cell-${rIdx}-${c}`);
       if (!cell) continue;
       cell.textContent = attempt.guess[c];
-      // 翻轉動畫,逐格延遲
       setTimeout(() => {
         cell.classList.add('flip');
         setTimeout(() => {
@@ -264,7 +228,6 @@
         }, 300);
       }, c * 200);
     }
-    // 更新鍵盤狀態
     setTimeout(() => updateKeyboardColors(), COLS * 200 + 300);
   }
 
@@ -289,22 +252,136 @@
   }
 
   // ──────────────────────────────────────────────────────
+  // invalid 狀態管理
+  // ──────────────────────────────────────────────────────
+  function setInvalidRow() {
+    state.invalidMode = true;
+    const r = state.attempts.length;
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.getElementById(`cell-${r}-${c}`);
+      if (cell) cell.classList.add('invalid');
+    }
+    showToast('找不到這個詞,請按刪除鍵修改');
+  }
+
+  function clearInvalidRow() {
+    if (!state.invalidMode) return;
+    state.invalidMode = false;
+    const r = state.attempts.length;
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.getElementById(`cell-${r}-${c}`);
+      if (cell) cell.classList.remove('invalid');
+    }
+  }
+
+  // ──────────────────────────────────────────────────────
+  // 候選詞:當前輸入(滿 5 格)反查可能的中文兩字詞
+  // ──────────────────────────────────────────────────────
+  function getSuggestions(bopo) {
+    if (!bopo || bopo.length !== COLS) return [];
+    const validSet = new Set(VALID_BOPOS);
+    const results = [];
+    const seen = new Set();
+
+    for (const split of [1, 2, 3, 4]) {
+      const part1 = bopo.substring(0, split);
+      const part2 = bopo.substring(split);
+      if (!validSet.has(part1) || !validSet.has(part2)) continue;
+
+      const chars1 = BOPO_TO_CHARS[part1] || [];
+      const chars2 = BOPO_TO_CHARS[part2] || [];
+      if (chars1.length === 0 || chars2.length === 0) continue;
+
+      for (const c1 of chars1) {
+        for (const c2 of chars2) {
+          const word = c1 + c2;
+          if (!seen.has(word)) {
+            seen.add(word);
+            results.push(word);
+          }
+          if (results.length >= 40) return results;
+        }
+      }
+    }
+    return results;
+  }
+
+  function updateSuggestions() {
+    const box = document.getElementById('suggestions');
+    if (!box) return;
+
+    const bopo = state.currentInput;
+
+    if (state.finished || bopo.length !== COLS) {
+      box.classList.remove('show');
+      box.innerHTML = '';
+      return;
+    }
+
+    const list = getSuggestions(bopo);
+    if (list.length === 0) {
+      box.innerHTML = '<div class="sug-title">⚠️ 找不到符合的詞</div>';
+      box.classList.add('show');
+      return;
+    }
+
+    box.innerHTML =
+      '<div class="sug-title">可能的詞</div>' +
+      '<div class="sug-list">' +
+      list.map(w => `<span class="sug-item">${w}</span>`).join('') +
+      '</div>';
+    box.classList.add('show');
+  }
+
+  // ──────────────────────────────────────────────────────
   // 主互動
   // ──────────────────────────────────────────────────────
   function onKey(k) {
     if (state.finished) return;
+
     if (k === 'BACK') {
+      // invalid 狀態下,按刪除就是收回 → 解除 invalid + 同時刪一格
+      if (state.invalidMode) {
+        clearInvalidRow();
+      }
       state.currentInput = state.currentInput.slice(0, -1);
       renderCurrentInput();
       return;
     }
     if (k === 'ENTER') {
+      if (state.invalidMode) {
+        showToast('請先按刪除鍵修改答案');
+        shakeRow(state.attempts.length);
+        return;
+      }
       submitGuess();
+      return;
+    }
+    // 一般輸入
+    if (state.invalidMode) {
+      // invalid 狀態下,玩家必須先刪除才能繼續
+      showToast('請先按刪除鍵修改答案');
+      shakeRow(state.attempts.length);
       return;
     }
     if (state.currentInput.length >= COLS) return;
     state.currentInput += k;
     renderCurrentInput();
+  }
+
+  // ──────────────────────────────────────────────────────
+  // 詞庫驗證:5 格能切成兩個合法注音?
+  // ──────────────────────────────────────────────────────
+  function isValidWord(bopo5) {
+    const validSet = new Set(VALID_BOPOS);
+    for (const split of [1, 2, 3, 4]) {
+      const part1 = bopo5.substring(0, split);
+      const part2 = bopo5.substring(split);
+      if (validSet.has(part1) && validSet.has(part2)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async function submitGuess() {
@@ -314,6 +391,16 @@
       return;
     }
     const guessBopo = state.currentInput;
+
+    if (!isValidWord(guessBopo)) {
+      // 不算機會,變紅鎖住,玩家自己按刪除收回
+      shakeRow(state.attempts.length);
+      setInvalidRow();
+      return;
+    }
+
+    clearInvalidRow();
+
     const answerBopo = state.puzzle.bopo;
     const statuses = evaluate(guessBopo, answerBopo);
     const attempt = { guess: guessBopo, word: '', statuses };
@@ -322,8 +409,8 @@
     state.currentInput = '';
 
     await renderAttemptResult(rIdx, attempt);
+    updateSuggestions();  // 清掉候選詞顯示
 
-    // 儲存進度
     saveProgress(state.puzzle, {
       attempts: state.attempts,
       finished: state.finished,
@@ -415,7 +502,6 @@
     state.token = token;
     state.puzzle = puzzle;
 
-    // 顯示資訊
     document.getElementById('puzzle-info').textContent =
       `第 ${puzzle.issue} 期 · ${puzzle.date}`;
     document.getElementById('player-info').textContent =
@@ -424,15 +510,44 @@
     buildBoard();
     buildKeyboard();
 
-    // 載入進度
     const prev = loadProgress(state.puzzle);
     let alreadyAnnounced = false;
-    if (prev) {
+
+    if (puzzle.readonly) {
+      state.finished = true;
+      alreadyAnnounced = true;
+      if (prev) {
+        state.attempts = prev.attempts || [];
+        state.startTime = prev.startTime || Date.now();
+        state.attempts.forEach((att, idx) => {
+          for (let c = 0; c < COLS; c++) {
+            const cell = document.getElementById(`cell-${idx}-${c}`);
+            if (cell) {
+              cell.textContent = att.guess[c];
+              cell.className = 'cell ' + att.statuses[c];
+            }
+          }
+        });
+        updateKeyboardColors();
+      }
+      if (puzzle.finishedWon) {
+        document.getElementById('modal-title').textContent = '🎉 你已經答對了!';
+        document.getElementById('modal-text').textContent =
+          state.attempts.length > 0 ? `用了 ${state.attempts.length} 次猜中` : '今日成績已公布到頻道';
+        document.getElementById('stat-attempts').textContent =
+          state.attempts.length > 0 ? `${state.attempts.length}/6` : '✓';
+      } else {
+        document.getElementById('modal-title').textContent = '💔 你今日已挑戰失敗';
+        document.getElementById('modal-text').textContent = '明天再來吧!';
+        document.getElementById('stat-attempts').textContent = 'X/6';
+      }
+      document.getElementById('stat-time').textContent = '-';
+      document.getElementById('modal').classList.add('show');
+    } else if (prev) {
       state.attempts = prev.attempts || [];
       state.finished = prev.finished || false;
       state.startTime = prev.startTime || Date.now();
       alreadyAnnounced = prev.announced || false;
-      // 重繪所有已完成的列
       state.attempts.forEach((att, idx) => {
         for (let c = 0; c < COLS; c++) {
           const cell = document.getElementById(`cell-${idx}-${c}`);
@@ -443,7 +558,6 @@
         }
       });
       updateKeyboardColors();
-      // 如果已完成,直接顯示結果 modal
       if (state.finished) {
         const lastWin = state.attempts.length > 0 &&
           state.attempts[state.attempts.length-1].statuses.every(s => s === 'correct');
@@ -464,7 +578,6 @@
       state.startTime = Date.now();
     }
 
-    // 第一次進來才發開始通知
     if (!alreadyAnnounced) {
       saveProgress(state.puzzle, {
         attempts: state.attempts,
@@ -486,8 +599,6 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Enter') { onKey('ENTER'); e.preventDefault(); }
     else if (e.key === 'Backspace') { onKey('BACK'); e.preventDefault(); }
-    // 注音鍵盤對應 ㄅㄆㄇ等需要切輸入法,所以只支援 Enter/Backspace
-    // 點擊 UI 鍵盤即可
   });
 
   init();
