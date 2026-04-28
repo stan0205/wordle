@@ -71,21 +71,28 @@
 
   // ──────────────────────────────────────────────────────
   // localStorage:記錄今日進度,避免重複發開始通知
+  // key 用 puzzle 的 issue + date + bopo 組合,確保不同題目絕不撞 key
   // ──────────────────────────────────────────────────────
   const LS_KEY_PREFIX = 'wordle_progress_';
-  function getProgressKey(token) {
-    // 用 token 前 32 字當識別(token 每天每人不同)
-    return LS_KEY_PREFIX + token.substring(0, 32);
+  function getProgressKey(puzzle) {
+    // 用題目本身的識別:期數 + 日期 + 答案注音 + 玩家ID
+    return LS_KEY_PREFIX + [
+      puzzle.issue,
+      puzzle.date,
+      puzzle.bopo,
+      puzzle.userId,
+      puzzle.guildId,
+    ].join('|');
   }
-  function loadProgress(token) {
+  function loadProgress(puzzle) {
     try {
-      const raw = localStorage.getItem(getProgressKey(token));
+      const raw = localStorage.getItem(getProgressKey(puzzle));
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   }
-  function saveProgress(token, data) {
+  function saveProgress(puzzle, data) {
     try {
-      localStorage.setItem(getProgressKey(token), JSON.stringify(data));
+      localStorage.setItem(getProgressKey(puzzle), JSON.stringify(data));
     } catch (e) { /* 隱私模式可能無法寫,忽略 */ }
   }
 
@@ -317,7 +324,7 @@
     await renderAttemptResult(rIdx, attempt);
 
     // 儲存進度
-    saveProgress(state.token, {
+    saveProgress(state.puzzle, {
       attempts: state.attempts,
       finished: state.finished,
       startTime: state.startTime,
@@ -329,7 +336,7 @@
 
     if (isWin) {
       state.finished = true;
-      saveProgress(state.token, {
+      saveProgress(state.puzzle, {
         attempts: state.attempts,
         finished: true,
         startTime: state.startTime,
@@ -338,7 +345,7 @@
       setTimeout(() => onWin(), COLS * 200 + 600);
     } else if (isLose) {
       state.finished = true;
-      saveProgress(state.token, {
+      saveProgress(state.puzzle, {
         attempts: state.attempts,
         finished: true,
         startTime: state.startTime,
@@ -418,7 +425,7 @@
     buildKeyboard();
 
     // 載入進度
-    const prev = loadProgress(token);
+    const prev = loadProgress(state.puzzle);
     let alreadyAnnounced = false;
     if (prev) {
       state.attempts = prev.attempts || [];
@@ -459,7 +466,7 @@
 
     // 第一次進來才發開始通知
     if (!alreadyAnnounced) {
-      saveProgress(token, {
+      saveProgress(state.puzzle, {
         attempts: state.attempts,
         finished: state.finished,
         startTime: state.startTime,
