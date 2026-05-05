@@ -13,7 +13,7 @@
   // ──────────────────────────────────────────────────────
   // 常數
   // ──────────────────────────────────────────────────────
-  const ROWS = 6, COLS = 5;
+  const ROWS = 7, COLS = 5;
 
   const KEYBOARD_LAYOUT = [
     ['ㄅ','ㄉ','ㄓ','ㄚ','ㄞ','ㄢ','ㄦ'],
@@ -458,7 +458,7 @@
     const elapsed = getElapsedSec();
     document.getElementById('modal-title').textContent = '🎉 答對了!';
     document.getElementById('modal-text').textContent = `恭喜你用 ${attempts} 次猜中!`;
-    document.getElementById('stat-attempts').textContent = `${attempts}/6`;
+    document.getElementById('stat-attempts').textContent = `${attempts}/7`;
     document.getElementById('stat-time').textContent = fmtTime(elapsed);
     document.getElementById('modal').classList.add('show');
 
@@ -473,7 +473,7 @@
   async function onLose() {
     document.getElementById('modal-title').textContent = '💔 挑戰失敗';
     document.getElementById('modal-text').textContent = '6 次機會用完了!';
-    document.getElementById('stat-attempts').textContent = 'X/6';
+    document.getElementById('stat-attempts').textContent = 'X/7';
     document.getElementById('stat-time').textContent = fmtTime(getElapsedSec());
     document.getElementById('modal').classList.add('show');
 
@@ -535,11 +535,11 @@
         document.getElementById('modal-text').textContent =
           state.attempts.length > 0 ? `用了 ${state.attempts.length} 次猜中` : '今日成績已公布到頻道';
         document.getElementById('stat-attempts').textContent =
-          state.attempts.length > 0 ? `${state.attempts.length}/6` : '✓';
+          state.attempts.length > 0 ? `${state.attempts.length}/7` : '✓';
       } else {
         document.getElementById('modal-title').textContent = '💔 你今日已挑戰失敗';
         document.getElementById('modal-text').textContent = '明天再來吧!';
-        document.getElementById('stat-attempts').textContent = 'X/6';
+        document.getElementById('stat-attempts').textContent = 'X/7';
       }
       document.getElementById('stat-time').textContent = '-';
       document.getElementById('modal').classList.add('show');
@@ -565,11 +565,11 @@
           document.getElementById('modal-title').textContent = '🎉 你已經答對了!';
           document.getElementById('modal-text').textContent =
             `用了 ${state.attempts.length} 次猜中`;
-          document.getElementById('stat-attempts').textContent = `${state.attempts.length}/6`;
+          document.getElementById('stat-attempts').textContent = `${state.attempts.length}/7`;
         } else {
           document.getElementById('modal-title').textContent = '💔 你今日已挑戰失敗';
           document.getElementById('modal-text').textContent = '明天再來吧!';
-          document.getElementById('stat-attempts').textContent = 'X/6';
+          document.getElementById('stat-attempts').textContent = 'X/7';
         }
         document.getElementById('stat-time').textContent = '-';
         document.getElementById('modal').classList.add('show');
