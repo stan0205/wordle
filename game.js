@@ -472,14 +472,14 @@
 
   async function onLose() {
     document.getElementById('modal-title').textContent = '💔 挑戰失敗';
-    document.getElementById('modal-text').textContent = '6 次機會用完了!';
+    document.getElementById('modal-text').textContent = '7 次機會用完了!';
     document.getElementById('stat-attempts').textContent = 'X/7';
     document.getElementById('stat-time').textContent = fmtTime(getElapsedSec());
     document.getElementById('modal').classList.add('show');
 
     await sendEvent('finished', {
       won: false,
-      attempts: 6,
+      attempts: state.attempts.length,
       grid: state.attempts.map(a => a.statuses),
       elapsed: getElapsedSec(),
     });
